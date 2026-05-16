@@ -1,15 +1,9 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import type { CdsCard, CdsHookRequest } from "../fhir/types";
+import type { CdsHookRequest } from "../fhir/types";
+import type { UmiFinding } from "../umi/types";
 
 // Stub the Claude analyzer so the handler is tested in isolation (no network).
-const analyzeMock = mock(
-  async (): Promise<CdsCard> => ({
-    summary: "stub",
-    detail: "stub",
-    indicator: "info",
-    source: { label: "x", icon: "http://localhost:3000/icon.png" },
-  }),
-);
+const analyzeMock = mock(async (): Promise<UmiFinding[]> => []);
 mock.module("../claude/analyze", () => ({
   analyzePrefetch: analyzeMock,
   defaultClient: {},
@@ -37,28 +31,46 @@ beforeEach(() => {
 });
 
 describe("handlePatientView", () => {
-  test("absent prefetch -> info card, analyzer not called", async () => {
+  test("absent prefetch -> neutral info card, analyzer not called", async () => {
     const res = await handlePatientView(baseReq(undefined));
     expect(res.cards).toHaveLength(1);
     expect(res.cards[0]!.indicator).toBe("info");
     expect(res.cards[0]!.summary).toContain("No clinical data");
+    expect(res.cards[0]!.source.icon).toContain("/umi/m0i0d0e0-cnone.png");
     expect(analyzeMock).not.toHaveBeenCalled();
   });
 
-  test("data present -> analyzer card returned", async () => {
-    analyzeMock.mockResolvedValueOnce({
-      summary: "Real alert",
-      detail: "details",
-      indicator: "warning",
-      source: { label: "x", icon: "http://localhost:3000/icon.png" },
-    });
+  test("findings -> single composite card with correct icon + indicator", async () => {
+    analyzeMock.mockResolvedValueOnce([
+      {
+        category: "hypersensitivity",
+        severity: "life-threatening",
+        summary: "Penicillin anaphylaxis",
+        detail: "Anaphylactic shock 2021",
+      },
+      { category: "medical", summary: "Aortic stent", detail: "Implant" },
+    ]);
     const res = await handlePatientView(baseReq(conditionPrefetch));
     expect(analyzeMock).toHaveBeenCalledTimes(1);
-    expect(res.cards[0]!.summary).toBe("Real alert");
-    expect(res.cards[0]!.indicator).toBe("warning");
+    expect(res.cards).toHaveLength(1);
+    const card = res.cards[0]!;
+    expect(card.indicator).toBe("critical");
+    expect(card.source.icon).toContain(
+      "/umi/m1i0d0e0-clife-threatening.png",
+    );
+    expect(card.summary).toContain("Hypersensitivity");
+    expect(card.detail).toContain("Penicillin anaphylaxis");
   });
 
-  test("analyzer throws -> fail-soft info card, no exception", async () => {
+  test("no UMI found -> neutral 'no attention information' card", async () => {
+    analyzeMock.mockResolvedValueOnce([]);
+    const res = await handlePatientView(baseReq(conditionPrefetch));
+    expect(res.cards[0]!.indicator).toBe("info");
+    expect(res.cards[0]!.summary).toContain("No attention information");
+    expect(res.cards[0]!.source.icon).toContain("/umi/m0i0d0e0-cnone.png");
+  });
+
+  test("analyzer throws -> fail-soft neutral card, no exception", async () => {
     analyzeMock.mockRejectedValueOnce(new Error("Claude down"));
     const res = await handlePatientView(baseReq(conditionPrefetch));
     expect(res.cards).toHaveLength(1);

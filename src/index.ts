@@ -2,6 +2,7 @@ import { handlePatientView } from "./cds/patient-view";
 import { discovery } from "./cds/discovery";
 import { assertConfigured, config } from "./config";
 import type { CdsHookRequest } from "./fhir/types";
+import { getUmiPng, NEUTRAL_KEY } from "./umi/icon";
 
 assertConfigured();
 
@@ -9,6 +10,16 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
     headers: { "content-type": "application/json" },
+  });
+
+// Icons are deterministic and content-stable (keyed by UMI classification,
+// never patient data), so they are safely immutable-cacheable.
+const png = (bytes: Uint8Array) =>
+  new Response(bytes, {
+    headers: {
+      "content-type": "image/png",
+      "cache-control": "public, max-age=86400, immutable",
+    },
   });
 
 const server = Bun.serve({
@@ -21,18 +32,20 @@ const server = Bun.serve({
       return json(discovery);
     }
 
-    // Service-hosted Uppmärksamhetsinformation glyph referenced by
-    // cards[].source.icon.
+    // Neutral brand/fallback glyph (used by no-data and fail-soft cards).
     if (request.method === "GET" && url.pathname === "/icon.png") {
-      return new Response(
-        Bun.file(new URL("./assets/icon.png", import.meta.url)),
-        {
-          headers: {
-            "content-type": "image/png",
-            "cache-control": "public, max-age=86400",
-          },
-        },
-      );
+      return png(getUmiPng(NEUTRAL_KEY)!);
+    }
+
+    // Composite national-symbol glyph referenced by cards[].source.icon, e.g.
+    // /umi/m1i0d1e0-charmful.png
+    if (request.method === "GET" && url.pathname.startsWith("/umi/")) {
+      const file = url.pathname.slice("/umi/".length);
+      if (file.endsWith(".png")) {
+        const bytes = getUmiPng(decodeURIComponent(file.slice(0, -4)));
+        if (bytes) return png(bytes);
+      }
+      return json({ error: "Unknown icon" }, 404);
     }
 
     // CDS Hooks service invocation.
@@ -62,3 +75,4 @@ const server = Bun.serve({
 console.log(`CDS Hooks service listening on http://localhost:${server.port}`);
 console.log(`  Discovery:  GET  /cds-services`);
 console.log(`  Service:    POST /cds-services/agentic-patient-view`);
+console.log(`  UMI icons:  GET  /umi/{compositeKey}.png`);

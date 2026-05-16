@@ -1,54 +1,91 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config";
-import type { CdsCard, CdsIndicator } from "../fhir/types";
+import {
+  isUmiCategory,
+  isUmiSeverity,
+  type UmiFinding,
+} from "../umi/types";
 
 export const defaultClient = new Anthropic({ apiKey: config.anthropicApiKey });
 
 // Stable instructions are prompt-cached so repeated patient-view calls only pay
-// to process the (variable) clinical digest.
+// to process the (variable) clinical digest. Category definitions are lifted
+// from the Socialstyrelsen UMI v5.1 specification (Flag.category groups A-E).
 const SYSTEM_PROMPT = `You are a clinical decision support assistant embedded in a CDS Hooks patient-view service.
 
 You receive a pre-summarized clinical digest for a single patient (conditions,
 medications, labs, vitals, notes, imaging and reports - already flattened from
 FHIR, not raw JSON).
 
-Determine the single most important "Uppmärksamhetsinformation" (Swedish patient
-safety alert): the one thing a clinician must be aware of when opening this chart.
+Identify the patient-safety attention information ("Uppmärksamhetsinformation",
+UMI). Classify each finding into exactly one of the five UMI categories:
 
-Report exactly one alert by calling the report_uppmarksamhetsinformation tool.
-If nothing is noteworthy, still call the tool with indicator "info" and say so.`;
+- "medical": other significant medical condition, ongoing treatment, or the
+  presence of an implant or graft.
+- "infection": presence of an infectious agent (e.g. MRSA) or a communicable
+  disease (smittämne / smittsam sjukdom).
+- "hypersensitivity": an allergy or hypersensitivity state. ALWAYS include
+  "severity":
+  - "life-threatening": can be directly life-threatening (anaphylaxis,
+    Stevens-Johnson, airway-obstructing angioedema).
+  - "harmful": can cause lasting harm (e.g. hepatotoxic drug reaction).
+  - "discomforting": bothersome but not harmful or life-threatening.
+- "care-routine": a decision or information that should lead to a special care
+  routine (e.g. palliative-care decision, CPR stance).
+- "unstructured": historical free-text attention information; rarely derivable
+  from a structured prefetch - use sparingly.
+
+This is decision support, NOT the authoritative regulated UMI record.
+Report every distinct finding by calling the report_umi tool. Return an empty
+findings array if there is nothing noteworthy.`;
 
 const TOOL: Anthropic.Tool = {
-  name: "report_uppmarksamhetsinformation",
+  name: "report_umi",
   description:
-    "Report the single most important patient safety alert for this chart.",
+    "Report the patient's attention information (UMI) findings, classified per the Socialstyrelsen UMI specification.",
   input_schema: {
     type: "object",
     properties: {
-      summary: {
-        type: "string",
-        maxLength: 140,
-        description: "Headline alert, <= 140 characters.",
-      },
-      detail: {
-        type: "string",
-        description: "Short markdown with the key supporting findings.",
-      },
-      indicator: {
-        type: "string",
-        enum: ["info", "warning", "critical"],
-        description: "Clinical urgency of the alert.",
+      findings: {
+        type: "array",
+        description: "Distinct UMI findings. May be empty.",
+        items: {
+          type: "object",
+          properties: {
+            category: {
+              type: "string",
+              enum: [
+                "medical",
+                "infection",
+                "hypersensitivity",
+                "care-routine",
+                "unstructured",
+              ],
+              description: "UMI category.",
+            },
+            severity: {
+              type: "string",
+              enum: ["life-threatening", "harmful", "discomforting"],
+              description:
+                "Required for category 'hypersensitivity'; omit otherwise.",
+            },
+            summary: {
+              type: "string",
+              maxLength: 140,
+              description: "Headline finding, <= 140 characters.",
+            },
+            detail: {
+              type: "string",
+              description: "Short markdown with the key supporting findings.",
+            },
+          },
+          required: ["category", "summary", "detail"],
+        },
       },
     },
-    required: ["summary", "detail", "indicator"],
+    required: ["findings"],
   },
 };
-
-interface Verdict {
-  summary: string;
-  detail: string;
-  indicator: CdsIndicator;
-}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -80,13 +117,18 @@ async function createWithRetry(
   }
 }
 
+/**
+ * Classify the digest into UMI findings. Returns [] when Claude finds nothing.
+ * Throws only when the model returns no tool_use block at all, so the handler
+ * can distinguish "no UMI" (benign card) from "analysis failed" (fail-soft).
+ */
 export async function analyzePrefetch(
   summaryText: string,
   client: Anthropic = defaultClient,
-): Promise<CdsCard> {
+): Promise<UmiFinding[]> {
   const message = await createWithRetry(client, {
     model: config.claudeModel,
-    max_tokens: 1024,
+    max_tokens: 1500,
     system: [
       {
         type: "text",
@@ -99,33 +141,39 @@ export async function analyzePrefetch(
     messages: [{ role: "user", content: summaryText }],
   });
 
-  const verdict = extractVerdict(message);
-
-  return {
-    summary: verdict.summary,
-    detail: verdict.detail,
-    indicator: verdict.indicator,
-    source: {
-      label: "Agentic patient-view (Claude)",
-      icon: `${config.publicBaseUrl}/icon.png`,
-    },
-  };
+  return extractFindings(message);
 }
 
-function extractVerdict(message: Anthropic.Message): Verdict {
+function extractFindings(message: Anthropic.Message): UmiFinding[] {
   const toolUse = message.content.find(
     (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
   );
   if (!toolUse) {
-    throw new Error("Claude returned no tool_use block for the verdict");
+    throw new Error("Claude returned no tool_use block for the UMI report");
   }
-  const input = toolUse.input as Partial<Verdict>;
-  if (!input.summary || !input.indicator) {
-    throw new Error("Claude tool_use input missing required fields");
-  }
-  return {
-    summary: input.summary,
-    detail: input.detail ?? "",
-    indicator: input.indicator,
-  };
+  const raw = (toolUse.input as { findings?: unknown }).findings;
+  if (!Array.isArray(raw)) return [];
+
+  // Drop any finding the model malformed rather than failing the whole response.
+  return raw.flatMap((entry): UmiFinding[] => {
+    const e = entry as Partial<UmiFinding>;
+    if (
+      !isUmiCategory(e.category) ||
+      typeof e.summary !== "string" ||
+      e.summary.length === 0
+    ) {
+      return [];
+    }
+    const finding: UmiFinding = {
+      category: e.category,
+      summary: e.summary,
+      detail: typeof e.detail === "string" ? e.detail : "",
+    };
+    if (e.category === "hypersensitivity") {
+      finding.severity = isUmiSeverity(e.severity)
+        ? e.severity
+        : "discomforting";
+    }
+    return [finding];
+  });
 }

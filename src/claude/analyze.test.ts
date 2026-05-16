@@ -6,9 +6,7 @@ function toolUseMessage(
   input: Record<string, unknown>,
 ): Anthropic.Message {
   return {
-    content: [
-      { type: "tool_use", id: "t1", name: "report_uppmarksamhetsinformation", input },
-    ],
+    content: [{ type: "tool_use", id: "t1", name: "report_umi", input }],
   } as unknown as Anthropic.Message;
 }
 
@@ -32,19 +30,50 @@ function fakeClient(steps: Array<Anthropic.Message | Error>): {
 }
 
 describe("analyzePrefetch", () => {
-  test("maps a tool_use verdict to a CdsCard", async () => {
+  test("returns typed UMI findings from the tool_use block", async () => {
     const { client } = fakeClient([
       toolUseMessage({
-        summary: "Critical hyperkalemia",
-        detail: "K+ 6.8 mmol/L",
-        indicator: "critical",
+        findings: [
+          {
+            category: "hypersensitivity",
+            severity: "life-threatening",
+            summary: "Penicillin anaphylaxis",
+            detail: "Documented anaphylactic reaction",
+          },
+          { category: "infection", summary: "MRSA", detail: "Carrier" },
+        ],
       }),
     ]);
-    const card = await analyzePrefetch("digest", client);
-    expect(card.summary).toBe("Critical hyperkalemia");
-    expect(card.detail).toBe("K+ 6.8 mmol/L");
-    expect(card.indicator).toBe("critical");
-    expect(card.source.icon?.endsWith("/icon.png")).toBe(true);
+    const findings = await analyzePrefetch("digest", client);
+    expect(findings).toHaveLength(2);
+    expect(findings[0]).toMatchObject({
+      category: "hypersensitivity",
+      severity: "life-threatening",
+    });
+    expect(findings[1]!.category).toBe("infection");
+  });
+
+  test("defaults hypersensitivity severity and drops malformed findings", async () => {
+    const { client } = fakeClient([
+      toolUseMessage({
+        findings: [
+          { category: "hypersensitivity", summary: "Latex", detail: "" },
+          { category: "not-a-category", summary: "junk", detail: "x" },
+          { category: "medical", detail: "missing summary" },
+        ],
+      }),
+    ]);
+    const findings = await analyzePrefetch("digest", client);
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      category: "hypersensitivity",
+      severity: "discomforting",
+    });
+  });
+
+  test("empty findings array is valid (no UMI)", async () => {
+    const { client } = fakeClient([toolUseMessage({ findings: [] })]);
+    expect(await analyzePrefetch("digest", client)).toEqual([]);
   });
 
   test("throws when no tool_use block is present", async () => {
@@ -65,13 +94,13 @@ describe("analyzePrefetch", () => {
       const { client, calls } = fakeClient([
         transient,
         toolUseMessage({
-          summary: "Stable",
-          detail: "Nothing urgent",
-          indicator: "info",
+          findings: [
+            { category: "medical", summary: "Aortic stent", detail: "Implant" },
+          ],
         }),
       ]);
-      const card = await analyzePrefetch("digest", client);
-      expect(card.indicator).toBe("info");
+      const findings = await analyzePrefetch("digest", client);
+      expect(findings[0]!.category).toBe("medical");
       expect(calls()).toBe(2);
     },
     10_000,
