@@ -1,0 +1,19 @@
+{
+  "name": "agentic-patient-view-hook",
+  "version": "0.1.0",
+  "description": "CDS Hooks patient-view service that analyzes a patient prefetch with the Claude SDK and returns Uppmärksamhetsinformation as an icon card",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.1.0",
+    "typescript": "^5.5.0"
+  }
+}
