@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { discovery } from "./discovery";
+import { discovery, LONG_RUNNING_EXTENSION_URL } from "./discovery";
 
 describe("discovery", () => {
   const service = discovery.services[0]!;
@@ -23,5 +23,13 @@ describe("discovery", () => {
         "reports",
       ].sort(),
     );
+  });
+
+  test("advertises the long-running extension so EHRs can show a wait indicator", () => {
+    expect(LONG_RUNNING_EXTENSION_URL).toBe(
+      "https://cds-hooks.org/experimental/long-running",
+    );
+    expect(service.extension).toBeDefined();
+    expect(service.extension![LONG_RUNNING_EXTENSION_URL]).toBe(true);
   });
 });
