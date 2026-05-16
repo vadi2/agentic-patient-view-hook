@@ -1,29 +1,38 @@
-// Minimal, intentionally loose FHIR shapes - enough to route the prefetch into
-// Claude without committing to a full FHIR model in the scaffold.
+// FHIR resource shapes come from `@atomic-ehr/codegen`-generated types in
+// `src/fhir-types/`. The CDS Hooks envelope itself is not FHIR, so those
+// shapes stay hand-written here.
+import type {
+  Bundle,
+  Condition,
+  DiagnosticReport,
+  DocumentReference,
+  ImagingStudy,
+  MedicationRequest,
+  Observation,
+  Patient,
+} from "../fhir-types/hl7-fhir-r4-core";
 
-export interface FhirResource {
-  resourceType: string;
-  id?: string;
-  [key: string]: unknown;
-}
+export type {
+  Bundle,
+  Condition,
+  DiagnosticReport,
+  DocumentReference,
+  ImagingStudy,
+  MedicationRequest,
+  Observation,
+  Patient,
+};
 
-export interface FhirBundle {
-  resourceType: "Bundle";
-  entry?: Array<{ resource?: FhirResource }>;
-}
-
-/** Each prefetch key maps to a single resource or a search-set Bundle. */
-export type PrefetchValue = FhirResource | FhirBundle | undefined;
-
+/** Each prefetch key resolves to either a single resource or a search-set Bundle. */
 export interface PatientViewPrefetch {
-  patient?: FhirResource;
-  conditions?: PrefetchValue;
-  medications?: PrefetchValue;
-  labs?: PrefetchValue;
-  notes?: PrefetchValue;
-  imaging?: PrefetchValue;
-  reports?: PrefetchValue;
-  observations?: PrefetchValue;
+  patient?: Patient;
+  conditions?: Bundle<Condition>;
+  medications?: Bundle<MedicationRequest>;
+  labs?: Bundle<Observation>;
+  observations?: Bundle<Observation>;
+  notes?: Bundle<DocumentReference>;
+  imaging?: Bundle<ImagingStudy>;
+  reports?: Bundle<DiagnosticReport>;
 }
 
 export interface CdsHookRequest {

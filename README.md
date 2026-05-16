@@ -20,9 +20,14 @@ observations), analyzes it with the Claude SDK, and returns a single
 
 ```sh
 bun install
-cp .env.example .env   # then set ANTHROPIC_API_KEY
+bun run generate-types   # writes src/fhir-types/ (gitignored)
+cp .env.example .env     # then set ANTHROPIC_API_KEY
 bun run dev
 ```
+
+FHIR types are produced by [`@atomic-ehr/codegen`](https://github.com/atomic-ehr/codegen)
+from the prefetched R4 resources listed in `scripts/generate-types.ts`. Re-run
+`bun run generate-types` whenever that list changes.
 
 ## Endpoints
 
@@ -46,12 +51,14 @@ src/
   cds/discovery.ts    CDS Hooks discovery + prefetch templates
   cds/patient-view.ts patient-view handler
   claude/analyze.ts   Claude SDK call + verdict parsing
-  fhir/types.ts       minimal FHIR / CDS Hooks shapes
+  fhir/types.ts       prefetch + CDS Hooks shapes (re-exports FHIR types)
+  fhir-types/         generated FHIR R4 types (gitignored)
+scripts/
+  generate-types.ts   @atomic-ehr/codegen builder
 ```
 
 ## Known scaffold gaps
 
 - No FHIR fallback fetch when prefetch is absent.
-- Loose FHIR typing; prefetch is passed to Claude largely as-is.
 - No auth (CDS Hooks JWT), rate limiting, retries or tests yet.
 - Icon points at a placeholder; the real Uppmärksamhetsinformation glyph is TBD.
