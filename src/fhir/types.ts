@@ -11,6 +11,7 @@ import type {
   MedicationRequest,
   Observation,
   Patient,
+  Resource,
 } from "../fhir-types/hl7-fhir-r4-core";
 import type {
   CDSHooksRequest,
@@ -29,6 +30,7 @@ export type {
   MedicationRequest,
   Observation,
   Patient,
+  Resource,
 };
 
 /** Each prefetch key resolves to either a single resource or a search-set Bundle. */

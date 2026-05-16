@@ -21,6 +21,20 @@ const server = Bun.serve({
       return json(discovery);
     }
 
+    // Service-hosted Uppmärksamhetsinformation glyph referenced by
+    // cards[].source.icon.
+    if (request.method === "GET" && url.pathname === "/icon.png") {
+      return new Response(
+        Bun.file(new URL("./assets/icon.png", import.meta.url)),
+        {
+          headers: {
+            "content-type": "image/png",
+            "cache-control": "public, max-age=86400",
+          },
+        },
+      );
+    }
+
     // CDS Hooks service invocation.
     if (
       request.method === "POST" &&

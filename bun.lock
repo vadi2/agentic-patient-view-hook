@@ -8,7 +8,7 @@
         "@anthropic-ai/sdk": "^0.39.0",
       },
       "devDependencies": {
-        "@atomic-ehr/codegen": "^0.0.14-canary.20260512075402.de66f19",
+        "@atomic-ehr/codegen": "canary",
         "@types/bun": "^1.1.0",
         "tsx": "^4.22.0",
         "typescript": "^5.5.0",

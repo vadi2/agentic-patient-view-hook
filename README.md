@@ -6,15 +6,12 @@ observations), analyzes it with the Claude SDK, and returns a single
 **Uppmärksamhetsinformation** patient safety alert as an icon card via
 `cards[].source.icon`.
 
-> Scaffold status: this is a minimal, working skeleton committed so the project
-> is non-empty. Architecture, FHIR fidelity, prompt design, auth and tests are
-> intended to be planned next (e.g. via `/ultraplan`).
-
 ## Stack
 
 - Runtime: [Bun](https://bun.sh/)
 - Language: TypeScript
-- LLM: `@anthropic-ai/sdk` (prompt caching on the system instructions)
+- LLM: `@anthropic-ai/sdk` (prompt caching on the system instructions, tool-use
+  structured output)
 
 ## Setup
 
@@ -24,6 +21,9 @@ bun run generate-types   # writes src/fhir-types/ (gitignored)
 cp .env.example .env     # then set ANTHROPIC_API_KEY
 bun run dev
 ```
+
+`bun test` does **not** require `bun run generate-types` - the `fhir-types`
+imports are type-only and erased at runtime.
 
 FHIR types are produced by [`@atomic-ehr/codegen`](https://github.com/atomic-ehr/codegen)
 from the prefetched R4 resources listed in `scripts/generate-types.ts`. The
@@ -38,32 +38,52 @@ logical models in `hl7.fhir.uv.tools.r4` (vendored under
 | ------ | ------------------------------------- | ----------------------------- |
 | GET    | `/cds-services`                       | CDS Hooks discovery document  |
 | POST   | `/cds-services/agentic-patient-view`  | `patient-view` hook invocation |
+| GET    | `/icon.png`                           | Service-hosted alert glyph (`source.icon`) |
 
 ## Request flow
 
 1. EHR fires `patient-view` and delivers the configured prefetch.
-2. `handlePatientView` forwards the prefetch to Claude (`src/claude/analyze.ts`).
-3. Claude returns a verdict that becomes one CDS card with an alert icon.
+2. `summarizePrefetch` (`src/fhir/summarize.ts`) flattens the prefetch into a
+   compact sectioned clinical digest. No clinical data -> a benign info card is
+   returned without calling Claude.
+3. `analyzePrefetch` (`src/claude/analyze.ts`) sends the digest to Claude, which
+   must return the alert via the `report_uppmarksamhetsinformation` tool
+   (structured output, no string parsing); transient SDK errors are retried.
+4. The verdict becomes one CDS card whose `source.icon` points at
+   `${PUBLIC_BASE_URL}/icon.png`.
+5. Any analysis failure degrades to a single non-blocking info card - the
+   service never breaks the EHR chart view.
 
 ## Layout
 
 ```
 src/
-  index.ts            Bun HTTP server + routing
-  config.ts           env config
+  index.ts            Bun HTTP server + routing (+ /icon.png)
+  config.ts           env config (incl. publicBaseUrl)
   cds/discovery.ts    CDS Hooks discovery + prefetch templates
-  cds/patient-view.ts patient-view handler
-  claude/analyze.ts   Claude SDK call + verdict parsing
+  cds/patient-view.ts fail-soft patient-view handler
+  claude/analyze.ts   Claude tool-use call + retry
+  fhir/summarize.ts   prefetch -> compact clinical digest
   fhir/types.ts       prefetch + CDS Hooks shapes (re-exports generated)
   fhir-types/         generated FHIR R4 + CDS Hooks types (gitignored)
+  assets/icon.png     Uppmärksamhetsinformation glyph (100x100 PNG)
+  **/*.test.ts        bun test suites
 fhir/
   cds-hooks-logical-models/  vendored CDS Hooks SDs (input to codegen)
 scripts/
   generate-types.ts   @atomic-ehr/codegen builder
 ```
 
-## Known scaffold gaps
+## Behaviour & current limits
 
-- No FHIR fallback fetch when prefetch is absent.
-- No auth (CDS Hooks JWT), rate limiting, retries or tests yet.
-- Icon points at a placeholder; the real Uppmärksamhetsinformation glyph is TBD.
+- The handler **fails soft**: absent/empty prefetch and any Claude error both
+  return a single non-blocking info card, never an HTTP 500 to the EHR.
+- Claude output is enforced via tool use, not string parsing; transient
+  429/5xx/connection errors are retried (2s, 4s backoff).
+- The icon is a service-hosted 100x100 PNG; swap `src/assets/icon.png` for the
+  organisation's official Uppmärksamhetsinformation glyph when available.
+
+### Future work
+
+- No FHIR fallback fetch when a prefetch template is unfulfilled.
+- No CDS Hooks JWT auth or rate limiting.
