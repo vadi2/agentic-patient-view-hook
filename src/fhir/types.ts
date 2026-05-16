@@ -1,6 +1,7 @@
 // FHIR resource shapes come from `@atomic-ehr/codegen`-generated types in
-// `src/fhir-types/`. The CDS Hooks envelope itself is not FHIR, so those
-// shapes stay hand-written here.
+// `src/fhir-types/`. The CDS Hooks envelope shapes are now also generated,
+// from the cds-hooks logical models published in the FHIR tools IG
+// (hl7.fhir.uv.tools.r4) - see scripts/generate-types.ts.
 import type {
   Bundle,
   Condition,
@@ -11,6 +12,13 @@ import type {
   Observation,
   Patient,
 } from "../fhir-types/hl7-fhir-r4-core";
+import type {
+  CDSHooksRequest,
+  CDSHooksResponse,
+  CDSHooksResponseCards,
+  CDSHooksResponseCardsSource,
+  CDSHooksServices,
+} from "../fhir-types/hl7-fhir-uv-tools-r4";
 
 export type {
   Bundle,
@@ -35,32 +43,27 @@ export interface PatientViewPrefetch {
   reports?: Bundle<DiagnosticReport>;
 }
 
-export interface CdsHookRequest {
-  hook: string;
-  hookInstance: string;
-  context: {
-    userId?: string;
-    patientId: string;
-    [key: string]: unknown;
-  };
+/**
+ * CDS Hooks request envelope. The generated `CDSHooksRequest` models prefetch
+ * as an array of `{key, value}` entries (for FHIR validator compatibility); on
+ * the wire it's an object keyed by template name, so we override that field.
+ */
+export type CdsHookRequest = Omit<CDSHooksRequest, "prefetch" | "context"> & {
+  context: { userId?: string; patientId: string; [key: string]: unknown };
   prefetch?: PatientViewPrefetch;
-}
+};
 
-export interface CdsCardSource {
-  label: string;
-  url?: string;
-  /** Rendered by the EHR next to the card - this is the Uppmärksamhetsinformation icon. */
-  icon?: string;
-}
+/** The CDS Hooks `indicator` field. Generated as `string`; narrowed here. */
+export type CdsIndicator = "info" | "warning" | "critical";
 
-export interface CdsCard {
-  uuid?: string;
-  summary: string;
-  detail?: string;
-  indicator: "info" | "warning" | "critical";
-  source: CdsCardSource;
-}
+export type CdsCardSource = CDSHooksResponseCardsSource;
 
-export interface CdsResponse {
+export type CdsCard = Omit<CDSHooksResponseCards, "indicator"> & {
+  indicator: CdsIndicator;
+};
+
+export type CdsResponse = Omit<CDSHooksResponse, "cards"> & {
   cards: CdsCard[];
-}
+};
+
+export type CdsDiscovery = CDSHooksServices;

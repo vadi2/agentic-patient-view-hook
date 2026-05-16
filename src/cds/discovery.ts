@@ -1,5 +1,12 @@
+import type { CdsDiscovery } from "../fhir/types";
+
 // CDS Hooks discovery document. The prefetch templates ask the EHR to deliver
 // the resources Claude needs so the service stays a single round trip.
+//
+// The generated `CDSHooksServices` types `prefetch` as an array of {key,value}
+// for FHIR validator round-tripping; on the wire it's a plain object keyed by
+// template name. The discovery value below uses the wire shape and casts at
+// the export boundary.
 export const discovery = {
   services: [
     {
@@ -20,4 +27,10 @@ export const discovery = {
       },
     },
   ],
-} as const;
+} as const satisfies {
+  services: ReadonlyArray<
+    Omit<NonNullable<CdsDiscovery["services"]>[number], "prefetch"> & {
+      prefetch?: Record<string, string>;
+    }
+  >;
+};

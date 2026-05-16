@@ -1,0 +1,24 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "CDSHookContext",
+  "url": "http://hl7.org/fhir/tools/StructureDefinition/CDSHookContext",
+  "name": "CDSHookContext",
+  "title": "CDS Hook Context (open base)",
+  "status": "active",
+  "kind": "logical",
+  "abstract": true,
+  "type": "http://hl7.org/fhir/tools/StructureDefinition/CDSHookContext",
+  "baseDefinition": "http://hl7.org/fhir/tools/StructureDefinition/CDSHooksElement",
+  "derivation": "specialization",
+  "fhirVersion": "4.0.1",
+  "differential": {
+    "element": [
+      {
+        "id": "CDSHookContext",
+        "path": "CDSHookContext",
+        "short": "Hook-specific contextual data",
+        "definition": "Open base for hook-specific contextual data. Concrete shape depends on the hook value in the enclosing CDSHooksRequest."
+      }
+    ]
+  }
+}

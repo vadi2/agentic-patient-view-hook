@@ -26,8 +26,11 @@ bun run dev
 ```
 
 FHIR types are produced by [`@atomic-ehr/codegen`](https://github.com/atomic-ehr/codegen)
-from the prefetched R4 resources listed in `scripts/generate-types.ts`. Re-run
-`bun run generate-types` whenever that list changes.
+from the prefetched R4 resources listed in `scripts/generate-types.ts`. The
+CDS Hooks request/response/discovery envelope shapes are generated from the
+logical models in `hl7.fhir.uv.tools.r4` (vendored under
+`fhir/cds-hooks-logical-models/` - see the README there for why). Re-run
+`bun run generate-types` whenever those lists change.
 
 ## Endpoints
 
@@ -51,8 +54,10 @@ src/
   cds/discovery.ts    CDS Hooks discovery + prefetch templates
   cds/patient-view.ts patient-view handler
   claude/analyze.ts   Claude SDK call + verdict parsing
-  fhir/types.ts       prefetch + CDS Hooks shapes (re-exports FHIR types)
-  fhir-types/         generated FHIR R4 types (gitignored)
+  fhir/types.ts       prefetch + CDS Hooks shapes (re-exports generated)
+  fhir-types/         generated FHIR R4 + CDS Hooks types (gitignored)
+fhir/
+  cds-hooks-logical-models/  vendored CDS Hooks SDs (input to codegen)
 scripts/
   generate-types.ts   @atomic-ehr/codegen builder
 ```
