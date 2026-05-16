@@ -6,10 +6,20 @@ import { getUmiPng, NEUTRAL_KEY } from "./umi/icon";
 
 assertConfigured();
 
+// CDS Hooks clients (EHRs and the sandbox at sandbox.cds-hooks.org) call this
+// service cross-origin from the browser, so every response - including the
+// preflight - must carry permissive CORS headers.
+const CORS_HEADERS = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, POST, OPTIONS",
+  "access-control-allow-headers": "content-type, authorization",
+  "access-control-max-age": "86400",
+};
+
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...CORS_HEADERS },
   });
 
 // Icons are deterministic and content-stable (keyed by UMI classification,
@@ -19,6 +29,7 @@ const png = (bytes: Uint8Array) =>
     headers: {
       "content-type": "image/png",
       "cache-control": "public, max-age=86400, immutable",
+      ...CORS_HEADERS,
     },
   });
 
@@ -26,6 +37,12 @@ const server = Bun.serve({
   port: config.port,
   async fetch(request) {
     const url = new URL(request.url);
+
+    // CORS preflight - the browser sends this before the discovery GET and the
+    // service POST. Answer it for every path so neither is blocked.
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
 
     // CDS Hooks discovery endpoint.
     if (request.method === "GET" && url.pathname === "/cds-services") {
