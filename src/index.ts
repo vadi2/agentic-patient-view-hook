@@ -1,10 +1,8 @@
 import { handlePatientView } from "./cds/patient-view";
 import { discovery } from "./cds/discovery";
-import { assertConfigured, config } from "./config";
+import { config } from "./config";
 import type { CdsHookRequest } from "./fhir/types";
 import { getUmiPng, NEUTRAL_KEY } from "./umi/icon";
-
-assertConfigured();
 
 // CDS Hooks clients (EHRs and the sandbox at sandbox.cds-hooks.org) call this
 // service cross-origin from the browser, so every response - including the

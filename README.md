@@ -26,9 +26,17 @@ rendered for that patient.
 ```sh
 bun install
 bun run generate-types   # writes src/fhir-types/ (gitignored)
-cp .env.example .env     # then set ANTHROPIC_API_KEY
 bun run dev
 ```
+
+### Prerequisites
+
+- [Bun](https://bun.sh/) 1.3+ for the runtime, server, and package manager.
+- [Claude Code CLI](https://docs.claude.com/en/docs/claude-code) installed and
+  logged in (`claude login`). The Agent SDK shells out to your local
+  `claude` binary - no `ANTHROPIC_API_KEY` is required. (The SDK does still
+  honour `ANTHROPIC_API_KEY` if you'd rather use a raw key; see
+  `.env.example`.)
 
 `bun test` does **not** require `bun run generate-types` - the `fhir-types`
 imports are type-only and erased at runtime.
