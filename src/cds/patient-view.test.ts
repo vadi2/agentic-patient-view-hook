@@ -6,7 +6,6 @@ import type { UmiFinding } from "../umi/types";
 const analyzeMock = mock(async (): Promise<UmiFinding[]> => []);
 mock.module("../claude/analyze", () => ({
   analyzePrefetch: analyzeMock,
-  defaultClient: {},
 }));
 
 const { handlePatientView } = await import("./patient-view");

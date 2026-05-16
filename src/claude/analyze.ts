@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { query, type Options } from "@anthropic-ai/claude-agent-sdk";
 import { config } from "../config";
 import {
   isUmiCategory,
@@ -6,11 +6,11 @@ import {
   type UmiFinding,
 } from "../umi/types";
 
-export const defaultClient = new Anthropic({ apiKey: config.anthropicApiKey });
-
-// Stable instructions are prompt-cached so repeated patient-view calls only pay
-// to process the (variable) clinical digest. Category definitions are lifted
-// from the Socialstyrelsen UMI v5.1 specification (Flag.category groups A-E).
+// Mirrors fhir-profile-diff/src/explain/diff.ts: drive Claude with the Agent
+// SDK, no tools, no filesystem access - the prompt carries everything the
+// model needs. We diverge from that file only in collecting a single JSON
+// payload at the end (we need structured output to drive the UMI icon),
+// rather than streaming prose.
 const SYSTEM_PROMPT = `You are a clinical decision support assistant embedded in a CDS Hooks patient-view service.
 
 You receive a pre-summarized clinical digest for a single patient (conditions,
@@ -36,122 +36,34 @@ UMI). Classify each finding into exactly one of the five UMI categories:
   from a structured prefetch - use sparingly.
 
 This is decision support, NOT the authoritative regulated UMI record.
-Report every distinct finding by calling the report_umi tool. Return an empty
-findings array if there is nothing noteworthy.`;
 
-const TOOL: Anthropic.Tool = {
-  name: "report_umi",
-  description:
-    "Report the patient's attention information (UMI) findings, classified per the Socialstyrelsen UMI specification.",
-  input_schema: {
-    type: "object",
-    properties: {
-      findings: {
-        type: "array",
-        description: "Distinct UMI findings. May be empty.",
-        items: {
-          type: "object",
-          properties: {
-            category: {
-              type: "string",
-              enum: [
-                "medical",
-                "infection",
-                "hypersensitivity",
-                "care-routine",
-                "unstructured",
-              ],
-              description: "UMI category.",
-            },
-            severity: {
-              type: "string",
-              enum: ["life-threatening", "harmful", "discomforting"],
-              description:
-                "Required for category 'hypersensitivity'; omit otherwise.",
-            },
-            summary: {
-              type: "string",
-              maxLength: 140,
-              description: "Headline finding, <= 140 characters.",
-            },
-            detail: {
-              type: "string",
-              description: "Short markdown with the key supporting findings.",
-            },
-          },
-          required: ["category", "summary", "detail"],
-        },
-      },
-    },
-    required: ["findings"],
-  },
-};
+You must respond with a single JSON object and nothing else - no preamble, no
+markdown fence, no commentary. The shape is:
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+{"findings":[{"category":"...","severity":"...","summary":"...","detail":"..."}]}
 
-function isRetryable(err: unknown): boolean {
-  // APIConnectionError extends APIError with no status, so check it first.
-  if (err instanceof Anthropic.APIConnectionError) return true;
-  if (err instanceof Anthropic.APIError) {
-    const status = err.status;
-    return status === 429 || (typeof status === "number" && status >= 500);
+Rules:
+- "findings" is an array. Empty array means "nothing noteworthy".
+- "category" is one of the five strings above.
+- "severity" is required iff category is "hypersensitivity"; omit otherwise.
+- "summary" is <= 140 characters.
+- "detail" is short markdown supporting detail.
+- Do not run any tools - everything you need is in the prompt.`;
+
+const JSON_RE = /\{[\s\S]*\}/;
+
+function extractJson(raw: string): unknown {
+  // The model is told to emit pure JSON, but be defensive: pull the first
+  // {...} block in case it adds a stray prose line.
+  const match = raw.match(JSON_RE);
+  if (!match) {
+    throw new Error("Claude returned no JSON object");
   }
-  return false;
+  return JSON.parse(match[0]);
 }
 
-async function createWithRetry(
-  client: Anthropic,
-  params: Anthropic.MessageCreateParamsNonStreaming,
-): Promise<Anthropic.Message> {
-  const backoffsMs = [2000, 4000];
-  for (let attempt = 0; ; attempt++) {
-    try {
-      return await client.messages.create(params);
-    } catch (err) {
-      if (attempt < backoffsMs.length && isRetryable(err)) {
-        await sleep(backoffsMs[attempt]!);
-        continue;
-      }
-      throw err;
-    }
-  }
-}
-
-/**
- * Classify the digest into UMI findings. Returns [] when Claude finds nothing.
- * Throws only when the model returns no tool_use block at all, so the handler
- * can distinguish "no UMI" (benign card) from "analysis failed" (fail-soft).
- */
-export async function analyzePrefetch(
-  summaryText: string,
-  client: Anthropic = defaultClient,
-): Promise<UmiFinding[]> {
-  const message = await createWithRetry(client, {
-    model: config.claudeModel,
-    max_tokens: 1500,
-    system: [
-      {
-        type: "text",
-        text: SYSTEM_PROMPT,
-        cache_control: { type: "ephemeral" },
-      },
-    ],
-    tools: [TOOL],
-    tool_choice: { type: "tool", name: TOOL.name },
-    messages: [{ role: "user", content: summaryText }],
-  });
-
-  return extractFindings(message);
-}
-
-function extractFindings(message: Anthropic.Message): UmiFinding[] {
-  const toolUse = message.content.find(
-    (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
-  );
-  if (!toolUse) {
-    throw new Error("Claude returned no tool_use block for the UMI report");
-  }
-  const raw = (toolUse.input as { findings?: unknown }).findings;
+function coerceFindings(parsed: unknown): UmiFinding[] {
+  const raw = (parsed as { findings?: unknown } | null)?.findings;
   if (!Array.isArray(raw)) return [];
 
   // Drop any finding the model malformed rather than failing the whole response.
@@ -176,4 +88,40 @@ function extractFindings(message: Anthropic.Message): UmiFinding[] {
     }
     return [finding];
   });
+}
+
+/**
+ * Classify the digest into UMI findings via the Claude Agent SDK. Returns []
+ * when Claude finds nothing. Throws when the agent ends without a usable
+ * result so the handler can distinguish "no UMI" (benign card) from
+ * "analysis failed" (fail-soft).
+ *
+ * `runQuery` is injectable so tests can stub the SDK with an async iterator
+ * of SDKMessage values - we never spin up the real agent in unit tests.
+ */
+export type QueryRunner = typeof query;
+
+export async function analyzePrefetch(
+  summaryText: string,
+  runQuery: QueryRunner = query,
+): Promise<UmiFinding[]> {
+  const options: Options = {
+    systemPrompt: SYSTEM_PROMPT,
+    allowedTools: [],
+    model: config.claudeModel,
+    maxTurns: 1,
+  };
+
+  let resultText: string | undefined;
+  for await (const message of runQuery({ prompt: summaryText, options })) {
+    if (message.type === "result" && message.subtype === "success") {
+      resultText = message.result;
+    }
+  }
+
+  if (!resultText) {
+    throw new Error("Claude agent ended without a successful result");
+  }
+
+  return coerceFindings(extractJson(resultText));
 }

@@ -17,8 +17,9 @@ rendered for that patient.
 
 - Runtime: [Bun](https://bun.sh/)
 - Language: TypeScript
-- LLM: `@anthropic-ai/sdk` (prompt caching on the system instructions, tool-use
-  structured output)
+- LLM: `@anthropic-ai/claude-agent-sdk` driving a local agent with no tools
+  (`allowedTools: []`); structured output is enforced by a JSON-only system
+  prompt, parsed defensively on the way out
 
 ## Setup
 
@@ -65,9 +66,12 @@ immutable-cacheable.
 2. `summarizePrefetch` (`src/fhir/summarize.ts`) flattens the prefetch into a
    compact sectioned clinical digest. No clinical data -> a benign info card is
    returned without calling Claude.
-3. `analyzePrefetch` (`src/claude/analyze.ts`) sends the digest to Claude, which
-   returns classified UMI findings via the `report_umi` tool (structured
-   output, no string parsing); transient SDK errors are retried.
+3. `analyzePrefetch` (`src/claude/analyze.ts`) hands the digest to a local
+   agent via `query()` from `@anthropic-ai/claude-agent-sdk` with
+   `allowedTools: []` - the agent has no filesystem or bash access, only the
+   prompt. Claude is instructed to emit a single JSON object; the handler
+   parses defensively (extracts the first `{...}` block) and drops any
+   malformed finding.
 4. Findings fold into one composite `UmiState`; the handler emits a single card
    whose `source.icon` is `${PUBLIC_BASE_URL}/umi/{compositeKey}.png` and whose
    `indicator` is derived from the state.
@@ -82,7 +86,7 @@ src/
   config.ts           env config (incl. publicBaseUrl)
   cds/discovery.ts    CDS Hooks discovery + prefetch templates
   cds/patient-view.ts fail-soft handler -> one composite UMI card
-  claude/analyze.ts   Claude tool-use UMI classification + retry
+  claude/analyze.ts   Claude Agent SDK query() with no tools + JSON parse
   fhir/summarize.ts   prefetch -> compact clinical digest
   fhir/types.ts       prefetch + CDS Hooks shapes (re-exports generated)
   fhir-types/         generated FHIR R4 + CDS Hooks types (gitignored)
@@ -100,8 +104,10 @@ scripts/
 
 - The handler **fails soft**: absent/empty prefetch and any Claude error both
   return a single non-blocking info card, never an HTTP 500 to the EHR.
-- Claude output is enforced via tool use, not string parsing; transient
-  429/5xx/connection errors are retried (2s, 4s backoff).
+- Claude output is enforced via a JSON-only system prompt; the parser
+  extracts the first `{...}` block and drops malformed findings rather than
+  failing the whole response. The Agent SDK handles transport-level retries
+  internally.
 - Icons are 100x100 PNGs pre-rendered from `src/assets/umi/symbol.svg`; replace
   that single asset with the licensed official artwork for production.
 - UMI here is LLM-derived **decision support**, not the authoritative regulated
